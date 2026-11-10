@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>StudyKit: PDF to flashcards and quizzes</title>
+<style>
+:root{--bg:#fbfbf9;--fg:#1d1f24;--mut:#667085;--card:#f0f1ee;--line:#d9dbd6;--acc:#2f5bea;--accfg:#fff;--ok:#15803d;--bad:#b91c1c;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15171b;--fg:#eceef2;--mut:#9aa3b2;--card:#21252c;--line:#363b44;--acc:#8aa6ff;--accfg:#10131a;--ok:#4ade80;--bad:#f87171}}
+:root[data-theme="dark"]{--bg:#15171b;--fg:#eceef2;--mut:#9aa3b2;--card:#21252c;--line:#363b44;--acc:#8aa6ff;--accfg:#10131a;--ok:#4ade80;--bad:#f87171}
+*{box-sizing:border-box}html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:760px;margin:0 auto;padding:28px 16px 56px}
+h1{font-size:1.7rem;margin:0}h2{font-size:1.1rem;margin:28px 0 8px}
+.sub{color:var(--mut);margin:4px 0 20px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:22px;text-align:center;cursor:pointer;color:var(--mut)}
+.drop.on{border-color:var(--acc);color:var(--fg)}
+textarea{width:100%;min-height:90px;margin-top:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);padding:10px;font:inherit;resize:vertical}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
+select,input[type=number],button{font:inherit;padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+button{cursor:pointer}button.p{background:var(--acc);color:var(--accfg);border-color:var(--acc);font-weight:600}
+button:disabled{opacity:.5;cursor:default}
+#status{margin-top:12px;color:var(--mut);min-height:1.4em}#notes{color:var(--bad);margin-top:6px}
+.fc{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:8px 0;cursor:pointer;width:100%;text-align:left}
+.fc small{display:block;color:var(--mut);margin-top:6px}.fc.flip{border-color:var(--acc)}
+.q{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:10px 0}
+.opt{display:block;width:100%;text-align:left;margin:6px 0}
+.opt.ok{border-color:var(--ok);color:var(--ok)}.opt.bad{border-color:var(--bad);color:var(--bad)}
+.q small{color:var(--mut);display:block;margin-top:6px}
+.score{font-weight:600;margin-top:8px}
+li{margin:6px 0}
+footer{color:var(--mut);font-size:.85rem;margin-top:40px}
+</style></head><body><main>
+<h1>StudyKit</h1>
+<p class="sub">Drop in a PDF or text file. Get a summary, flashcards and a practice quiz.</p>
+
+<div class="panel">
+  <div class="drop" id="drop" tabindex="0">Drop a PDF, TXT or MD file here, or click to choose<br><small id="fname"></small></div>
+  <input id="file" type="file" accept=".pdf,.txt,.md,application/pdf,text/plain" hidden>
+  <textarea id="paste" placeholder="Or paste text here"></textarea>
+  <div class="row">
+    <label>Engine <select id="engine"><option value="offline">Offline (in this browser)</option></select></label>
+    <label>Items <input id="n" type="number" min="1" max="30" value="8" style="width:72px"></label>
+    <button class="p" id="go">Generate</button>
+  </div>
+  <div id="status" role="status"></div><div id="notes"></div>
+</div>
+
+<div id="out"></div>
+<div class="row" id="exp" hidden>
+  <button id="bmd">Save Markdown</button><button id="ban">Save Anki cards</button><button id="bcp">Copy Markdown</button>
+</div>
+<footer>Files are read in your browser. In Offline mode nothing leaves this page. The Claude engine sends the document text to Claude to write the questions.</footer>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+/*LOGIC-START*/
+const STOP=new Set(("a about above after again all also am an and any are as at be because been before being below between both but by can could did do does doing down during each few for from further had has have having he her here hers him his how i if in into is it its itself just me more most my no nor not now of off on once only or other our out over own same she should so some such than that the their them then there these they this those through to too under until up very was we were what when where which while who whom why will with would you your however thus therefore may might must shall one two three use used using like many much").split(" "));
+const WORD=/[A-Za-z][A-Za-z-]{3,}/g;
+function cleanText(t){return t.replace(/\0/g," ").replace(/\r\n?/g,"\n").replace(/(\w)-\n(\w)/g,"$1$2").replace(/(?<![.!?:\n])\n(?!\n)/g," ").replace(/[ \t]+/g," ").replace(/\n{3,}/g,"\n\n").trim()}
+function sentences(t){return t.replace(/\n/g," ").split(/(?<=[.!?])\s+(?=[A-Z0-9"'(])/).map(s=>s.trim()).filter(Boolean)}
+function words(s){return(s.match(WORD)||[]).filter(w=>!STOP.has(w.toLowerCase()))}
+function freqOf(t){const f=new Map();for(const w of words(t)){const k=w.toLowerCase();f.set(k,(f.get(k)||0)+1)}return f}
+function ranked(t,f){const out=[];sentences(t).forEach((s,i)=>{if(s.length<40||s.length>300)return;const w=words(s);if(w.length<4)return;
+ let sc=0;for(const k of new Set(w.map(x=>x.toLowerCase())))sc+=f.get(k)||0;out.push({sc:sc/Math.sqrt(w.length),i,s})});
+ return out.sort((a,b)=>b.sc-a.sc||a.i-b.i)}
+function keyTerm(s,f){const c=words(s).filter(w=>w.length>4);if(!c.length)return null;
+ return c.reduce((b,w)=>{const a=f.get(w.toLowerCase())||0,bb=f.get(b.toLowerCase())||0;return(a>bb||(a===bb&&w.length>b.length))?w:b})}
+function rng(seed){let a=seed>>>0;return()=>{a=(a+0x6D2B79F5)>>>0;let t=a;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296}}
+function blank(s,term){return s.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"i"),"_____")}
+function offline(text,n){
+ const f=freqOf(text),r=ranked(text,f),rand=rng(7);
+ const summary=r.slice(0,n).sort((a,b)=>a.i-b.i).map(x=>x.s);
+ const flashcards=[],used=new Set();
+ for(const {s} of r){const t=keyTerm(s,f);if(!t||used.has(t.toLowerCase()))continue;used.add(t.toLowerCase());
+  flashcards.push({front:"Fill in the blank: "+blank(s,t),back:t});if(flashcards.length>=n)break}
+ const pool=[...f.entries()].sort((a,b)=>b[1]-a[1]).slice(0,60).map(e=>e[0]).filter(w=>w.length>4);
+ const quiz=[],u2=new Set();
+ for(const {s} of r){const t=keyTerm(s,f);if(!t||u2.has(t.toLowerCase()))continue;
+  const up=t[0]===t[0].toUpperCase()&&t[0]!==t[0].toLowerCase();
+  let cand=pool.filter(w=>w!==t.toLowerCase());const same=cand.filter(w=>(w[0]!==w[0].toLowerCase())===up);if(same.length>=3)cand=same;
+  if(cand.length<3)continue;const d=[];while(d.length<3){const w=cand.splice(Math.floor(rand()*cand.length),1)[0];d.push(w)}
+  const ans=up?t:t.toLowerCase(),opts=[...d,ans];
+  for(let i=opts.length-1;i>0;i--){const j=Math.floor(rand()*(i+1));[opts[i],opts[j]]=[opts[j],opts[i]]}
+  u2.add(t.toLowerCase());
+  quiz.push({question:"Which word best completes this sentence? "+blank(s,t),options:opts,answer_index:opts.indexOf(ans),explanation:"Original sentence: "+s});
+  if(quiz.length>=n)break}
+ return{summary,flashcards,quiz}}
+function validate(d,n){
+ const str=x=>typeof x==="string"&&x.trim().length>0;
+ const summary=(Array.isArray(d.summary)?d.summary:[]).filter(str).map(s=>s.trim()).slice(0,n);
+ const seenF=new Set(),flashcards=(Array.isArray(d.flashcards)?d.flashcards:[]).filter(c=>c&&str(c.front)&&str(c.back)).map(c=>({front:c.front.trim(),back:c.back.trim()})).filter(c=>!seenF.has(c.front.toLowerCase())&&seenF.add(c.front.toLowerCase())).slice(0,n);
+ const quiz=(Array.isArray(d.quiz)?d.quiz:[]).filter(q=>q&&str(q.question)&&Array.isArray(q.options)&&q.options.length===4&&q.options.every(str)&&new Set(q.options.map(o=>o.trim().toLowerCase())).size===4&&Number.isInteger(q.answer_index)&&q.answer_index>=0&&q.answer_index<4)
+  .map(q=>({question:q.question.trim(),options:q.options.map(o=>o.trim()),answer_index:q.answer_index,explanation:str(q.explanation)?q.explanation.trim():""})).slice(0,n);
+ return{summary,flashcards,quiz}}
+function claudePrompt(text,n){return `You are a careful study assistant. Use ONLY the document below. Never invent facts.
+Create study material and reply with one JSON object and nothing else, in exactly this shape:
+{"summary":["${n} short bullet sentences covering the main ideas"],
+"flashcards":[{"front":"question or term","back":"short correct answer"}],
+"quiz":[{"question":"...","options":["a","b","c","d"],"answer_index":0,"explanation":"one sentence"}]}
+Rules: exactly ${n} items in each list. Quiz questions have exactly 4 distinct options, one correct, three plausible but wrong. answer_index is the 0-based index of the correct option. Spread the answer position around.
+
+DOCUMENT:
+${text}`}
+function toMarkdown(r,src){const L=["# Study pack: "+(src||"document"),""];
+ if(r.summary.length)L.push("## Summary",...r.summary.map(b=>"- "+b),"");
+ if(r.flashcards.length){L.push("## Flashcards","");r.flashcards.forEach((c,i)=>L.push(`**${i+1}. ${c.front}**`,"Answer: "+c.back,""))}
+ if(r.quiz.length){L.push("## Quiz","");r.quiz.forEach((q,i)=>{L.push(`**${i+1}. ${q.question}**`);q.options.forEach((o,k)=>L.push(`   ${"ABCD"[k]}. ${o}`));L.push(`   Answer: ${"ABCD"[q.answer_index]}. ${q.explanation}`.trimEnd(),"")})}
+ return L.join("\n").trimEnd()+"\n"}
+function toAnki(r){return r.flashcards.map(c=>[c.front,c.back].map(x=>x.replace(/[\t\r\n]+/g," ")).join("\t")).join("\n")+"\n"}
+/*LOGIC-END*/
+
+const $=id=>document.getElementById(id),MAXC=30000;
+const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e};
+let sample=null,downloads=null,last=null,fileText="",fileName="";
+
+(async()=>{try{sample=await claude.use("sample")}catch(e){}
+ if(sample){const o=el("option",0,"Claude (better questions)");o.value="claude";$("engine").append(o);$("engine").value="claude"}
+ try{downloads=await claude.use("downloads")}catch(e){}})();
+
+async function readPdf(buf){
+ if(!window.pdfjsLib)throw new Error("The PDF reader could not load. Check your connection or paste the text instead.");
+ pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+ const pdf=await pdfjsLib.getDocument({data:buf}).promise,pages=[];
+ for(let p=1;p<=pdf.numPages;p++){const c=await(await pdf.getPage(p)).getTextContent();
+  let line="",out="";for(const it of c.items){line+=it.str;if(it.hasEOL){out+=line+"\n";line=""}else if(!/\s$/.test(it.str))line+=" "}
+  pages.push(out+line)}
+ return pages.join("\n\n")}
+async function takeFile(f){
+ $("status").textContent="Reading "+f.name+"...";$("notes").textContent="";
+ try{const isPdf=/\.pdf$/i.test(f.name)||f.type==="application/pdf";
+  if(!isPdf&&!/\.(txt|md|text)$/i.test(f.name))throw new Error("Unsupported file type. Use PDF, TXT or MD.");
+  if(f.size>25*1024*1024)throw new Error("File is larger than 25 MB.");
+  fileText=cleanText(isPdf?await readPdf(await f.arrayBuffer()):await f.text());fileName=f.name;
+  $("fname").textContent=f.name+" ("+fileText.length.toLocaleString()+" characters)";$("paste").value="";
+  $("status").textContent=fileText.length<50?"Almost no text found. If this is a scanned PDF, it needs OCR first.":"File ready.";
+  if(fileText.length<50)fileText=""
+ }catch(e){fileText="";$("status").textContent="";$("notes").textContent=e.message||String(e)}}
+const drop=$("drop");
+drop.onclick=()=>$("file").click();drop.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();$("file").click()}};
+$("file").onchange=e=>{if(e.target.files[0])takeFile(e.target.files[0])};
+["dragenter","dragover"].forEach(v=>drop.addEventListener(v,e=>{e.preventDefault();drop.classList.add("on")}));
+["dragleave","drop"].forEach(v=>drop.addEventListener(v,e=>{e.preventDefault();drop.classList.remove("on")}));
+drop.addEventListener("drop",e=>{if(e.dataTransfer.files[0])takeFile(e.dataTransfer.files[0])});
+
+$("go").onclick=async()=>{
+ const pasted=cleanText($("paste").value),text=pasted||fileText,src=pasted?"pasted text":fileName;
+ const n=Math.max(1,Math.min(30,parseInt($("n").value)||8));
+ $("notes").textContent="";
+ if(text.length<50){$("notes").textContent="Add a file or paste at least a few sentences first.";return}
+ $("go").disabled=true;$("out").replaceChildren();$("exp").hidden=true;
+ try{let res,notes=[];
+  if($("engine").value==="claude"&&sample){
+   let t=text;if(t.length>MAXC){t=t.slice(0,MAXC);notes.push("Long document: only the first "+MAXC.toLocaleString()+" characters were sent to Claude. Offline mode reads everything.")}
+   $("status").textContent="Claude is writing your study pack...";
+   const d=await sample.json(claudePrompt(t,n),{modelTier:"default",cache:false});
+   res=validate(d,n)}
+  else{$("status").textContent="Generating...";await new Promise(r=>setTimeout(r,20));res=validate(offline(text,n),n)}
+  if(!res.summary.length&&!res.flashcards.length&&!res.quiz.length)throw new Error("Nothing could be generated from this text. Try a longer, more factual passage.");
+  last={res,src};render(res);$("exp").hidden=false;$("status").textContent="Done.";$("notes").textContent=notes.join(" ")
+ }catch(e){$("status").textContent="";
+  $("notes").textContent=e&&e.code==="not_granted"?"Claude access was not allowed. Switch the engine to Offline, or allow it and try again.":
+   e&&e.code==="rate_limited"?"Too many requests. Wait a moment and try again.":((e&&e.message)||"Something went wrong.")}
+ finally{$("go").disabled=false}};
+
+function render(r){const o=$("out");o.replaceChildren();
+ if(r.summary.length){o.append(el("h2",0,"Summary"));const u=el("ul");r.summary.forEach(b=>u.append(el("li",0,b)));o.append(u)}
+ if(r.flashcards.length){o.append(el("h2",0,"Flashcards (tap to flip)"));
+  r.flashcards.forEach(c=>{const b=el("button","fc");const t=el("span",0,c.front);b.append(t);let f=false;
+   b.onclick=()=>{f=!f;t.textContent=f?c.back:c.front;b.classList.toggle("flip",f)};o.append(b)})}
+ if(r.quiz.length){o.append(el("h2",0,"Practice quiz"));const sc=el("div","score");let right=0,done=0;
+  r.quiz.forEach((q,i)=>{const d=el("div","q");d.append(el("b",0,(i+1)+". "+q.question));let ans=false;
+   q.options.forEach((op,k)=>{const b=el("button","opt","ABCD"[k]+". "+op);
+    b.onclick=()=>{if(ans)return;ans=true;done++;const bs=d.querySelectorAll(".opt");bs[q.answer_index].classList.add("ok");
+     if(k===q.answer_index)right++;else b.classList.add("bad");
+     if(q.explanation)d.append(el("small",0,q.explanation));sc.textContent="Score: "+right+" of "+done+" answered"};d.append(b)});o.append(d)});
+  o.append(sc)}}
+
+async function save(name,data){
+ if(downloads){try{await downloads.save({filename:name,data});return}catch(e){if(e&&e.code==="declined")return}}
+ try{await navigator.clipboard.writeText(data);$("status").textContent="Saving is not available here, so it was copied to your clipboard."}
+ catch(e){$("status").textContent="Saving is not available here. Select the text on the page and copy it."}}
+$("bmd").onclick=()=>last&&save("studypack.md",toMarkdown(last.res,last.src));
+$("ban").onclick=()=>last&&save("flashcards.txt",toAnki(last.res));
+$("bcp").onclick=async()=>{if(!last)return;try{await navigator.clipboard.writeText(toMarkdown(last.res,last.src));$("status").textContent="Copied."}catch(e){$("status").textContent="Copy is not available here."}};
+</script></body></html>
