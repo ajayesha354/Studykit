@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "studykit"
+version = "0.1.0"
+description = "Turn a PDF or text file into summaries, flashcards and quizzes with local or API LLMs."
+requires-python = ">=3.10"
+dependencies = ["pypdf>=4", "httpx>=0.27", "pydantic>=2.5", "fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "reportlab>=4"]
+
+[project.scripts]
+studykit = "studykit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+studykit = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
